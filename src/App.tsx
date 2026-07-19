@@ -1,81 +1,78 @@
-import { useEffect, useState } from "react";
-import reactLogo from "./assets/react.svg";
-// import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+import { ReceiptPreview } from "./components/ReceiptPreview";
+import { sampleOrder } from "./data/sampleOrder";
+import { getDefaultPrinters, getPrinterName } from "./printing/printerConfig";
+import { printerQueue } from "./printing/printerQueue";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-  const [posts, setPosts] = useState([]);
+  const [status, setStatus] = useState("Press Space or click Print to send both receipts to the printer.");
+  const [selectedPrinterId, setSelectedPrinterId] = useState("thermal-demo");
+  const [printers] = useState(() => getDefaultPrinters());
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(`Invoking on submit command with name: ${name}`);
-  }
+  const order = useMemo(() => sampleOrder, []);
 
   useEffect(() => {
-    fetch('https://jsonplaceholder.typicode.com/posts').then((response) => response.json())
-      .then((data) => {
-        setPosts(data);
-      })
-      .catch((error) => {
-        console.error("Error fetching posts:", error);
-      });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "Space") {
+        event.preventDefault();
+        void handlePrint();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  async function handlePrint() {
+    setStatus(`Printing customer bill and kitchen ticket on ${getPrinterName(printers, selectedPrinterId)}...`);
+    try {
+      await printerQueue.enqueue(order, selectedPrinterId);
+      setStatus("Print jobs queued successfully.");
+    } catch (error) {
+      console.error(error);
+      setStatus("Printing failed. Please verify the printer setup.");
+    }
+  }
+
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-
-      <section>
-        <h2>Posts</h2>
-        <div className="image-gallery">
-          <table>
-            <thead>
-              <th>id</th>
-              <th>Title</th>
-              <th>body</th>
-            </thead>
-            <tbody>
-              {posts.map((post: any) => (
-                <tr key={post.id}>
-                  <td>{post.id}</td>
-                  <td>{post.title}</td>
-                  <td>{post.body}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <main className="pos-shell">
+      <section className="panel panel--summary">
+        <h1>DreamX POS Printing Demo</h1>
+        <p className="subtitle">Offline-first thermal receipt printing for customer bills and kitchen tickets.</p>
+        <label className="printer-select" htmlFor="printer-select">
+          Printer
+          <select id="printer-select" value={selectedPrinterId} onChange={(event) => setSelectedPrinterId(event.target.value)}>
+            {printers.map((printer) => (
+              <option key={printer.id} value={printer.id}>
+                {printer.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="print-button" type="button" onClick={() => void handlePrint()}>
+          Print Both Receipts
+        </button>
+        <p className="status">{status}</p>
+        <div className="meta-grid">
+          <div>
+            <strong>Order</strong>
+            <p>{order.orderNumber}</p>
+          </div>
+          <div>
+            <strong>Table</strong>
+            <p>{order.tableNumber}</p>
+          </div>
+          <div>
+            <strong>Waiter</strong>
+            <p>{order.waiterName}</p>
+          </div>
         </div>
+      </section>
+
+      <section className="panel panel--preview">
+        <ReceiptPreview order={order} receiptType="customer" />
+        <ReceiptPreview order={order} receiptType="kot" />
       </section>
     </main>
   );
