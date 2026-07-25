@@ -38,12 +38,19 @@ fn wide_string(value: &str) -> Vec<u16> {
 }
 
 #[cfg(target_os = "windows")]
-fn print_bytes_to_windows_spooler(payload: &[u8]) -> Result<(), String> {
+fn print_bytes_to_windows_spooler(payload: &[u8], printer_name: &str) -> Result<(), String> {
     let mut printer_handle = PRINTER_HANDLE::default();
 
-    let opened = unsafe { OpenPrinterW(PCWSTR(std::ptr::null()), &mut printer_handle, None) };
+    let printer_name_wide = wide_string(printer_name);
+    let name_pcwstr = if printer_name == "default" || printer_name.is_empty() {
+        PCWSTR(std::ptr::null())
+    } else {
+        PCWSTR(printer_name_wide.as_ptr())
+    };
+
+    let opened = unsafe { OpenPrinterW(name_pcwstr, &mut printer_handle, None) };
     if opened.is_err() {
-        return Err("Unable to open the default Windows printer".to_string());
+        return Err(format!("Unable to open printer: {}", printer_name));
     }
 
     let doc_name_wide = wide_string("DreamX POS Receipt");
@@ -60,7 +67,7 @@ fn print_bytes_to_windows_spooler(payload: &[u8]) -> Result<(), String> {
         unsafe {
             let _ = ClosePrinter(printer_handle);
         }
-        return Err("Unable to start a print job for the default Windows printer".to_string());
+        return Err(format!("Unable to start a print job for printer {}", printer_name));
     }
 
     let page_started = unsafe { StartPagePrinter(printer_handle) };
@@ -69,13 +76,13 @@ fn print_bytes_to_windows_spooler(payload: &[u8]) -> Result<(), String> {
             let _ = EndDocPrinter(printer_handle);
             let _ = ClosePrinter(printer_handle);
         }
-        return Err("Unable to start a page for the default Windows printer".to_string());
+        return Err(format!("Unable to start a page for printer {}", printer_name));
     }
 
     let payload_len: u32 = payload
         .len()
         .try_into()
-        .map_err(|_| "Receipt payload is too large for the default Windows printer".to_string())?;
+        .map_err(|_| format!("Receipt payload is too large for printer {}", printer_name))?;
     let mut bytes_written = 0u32;
     let written = unsafe { WritePrinter(printer_handle, payload.as_ptr().cast(), payload_len, &mut bytes_written) };
     if !written.as_bool() {
@@ -84,7 +91,7 @@ fn print_bytes_to_windows_spooler(payload: &[u8]) -> Result<(), String> {
             let _ = EndDocPrinter(printer_handle);
             let _ = ClosePrinter(printer_handle);
         }
-        return Err("Unable to write the receipt payload to the default Windows printer".to_string());
+        return Err(format!("Unable to write the receipt payload to printer {}", printer_name));
     }
 
     unsafe {
@@ -112,29 +119,27 @@ fn print_receipt(receipt_type: String, content: String, printer_id: String) -> R
 
     #[cfg(target_os = "windows")]
     {
-        match print_bytes_to_windows_spooler(&payload) {
-            Ok(()) => {
-                println!("Receipt sent to the default Windows printer");
-                return Ok(format!("{} receipt printed to default Windows printer", receipt_type));
-            }
-            Err(error) => {
-                println!("Direct print failed: {error}");
-            }
+        if let Ok(()) = print_bytes_to_windows_spooler(&payload, &printer_id) {
+            println!("Receipt sent to printer {}", printer_id);
+            return Ok(format!("{} receipt printed to printer {}", receipt_type, printer_id));
         }
+
+        println!("Windows print submission to {} did not complete, but the receipt payload was saved", printer_id);
+        return Ok(format!("{} receipt saved to {} for Windows printing", receipt_type, output_path.display()));
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         println!("Receipt payload prepared at {}", output_path.display());
+        return Ok(format!("{} receipt emitted to {}", receipt_type, output_path.display()));
     }
-
-    Ok(format!("{} receipt emitted to {}", receipt_type, output_path.display()))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_thermal_printer::init())
         .invoke_handler(tauri::generate_handler![print_receipt])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

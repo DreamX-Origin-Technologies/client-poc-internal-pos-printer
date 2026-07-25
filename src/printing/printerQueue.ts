@@ -1,21 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Order, ReceiptType } from "../types/receipt";
 import { buildReceiptText } from "./receiptTemplates";
+import { printReceiptViaPlugin } from "./thermalPrinterService";
 
 interface PrintJob {
   type: ReceiptType;
-  content: string;
-  printerId: string;
+  order: Order;
 }
 
 class PrinterQueue {
   private queue: PrintJob[] = [];
   private isRunning = false;
 
-  async enqueue(order: Order, printerId: string) {
+  async enqueue(order: Order) {
     const jobs: PrintJob[] = [
-      { type: "customer", content: buildReceiptText(order, "customer"), printerId },
-      { type: "kot", content: buildReceiptText(order, "kot"), printerId },
+      { type: "customer", order },
+      { type: "kot", order },
     ];
 
     this.queue.push(...jobs);
@@ -27,27 +27,37 @@ class PrinterQueue {
   private async run() {
     this.isRunning = true;
 
-    while (this.queue.length > 0) {
-      const nextJob = this.queue.shift();
-      if (!nextJob) {
-        continue;
+    try {
+      while (this.queue.length > 0) {
+        const nextJob = this.queue.shift();
+        if (!nextJob) {
+          continue;
+        }
+
+        await this.printReceipt(nextJob);
       }
-
-      await this.printReceipt(nextJob);
+    } finally {
+      this.isRunning = false;
     }
-
-    this.isRunning = false;
   }
 
   private async printReceipt(job: PrintJob) {
-    try {
+    const customerPrinter = localStorage.getItem("customer_printer");
+    const kitchenPrinter = localStorage.getItem("kitchen_printer");
+    const paperSize = localStorage.getItem("printer_paper_size") || "Mm80";
+
+    const targetPrinter = job.type === "customer" ? customerPrinter : kitchenPrinter;
+
+    if (targetPrinter) {
+      await printReceiptViaPlugin(targetPrinter, job.order, job.type, paperSize as any);
+    } else {
+      // Fallback to the original raw Windows spooler printing if no plugin printer is selected
+      const content = buildReceiptText(job.order, job.type);
       await invoke("print_receipt", {
         receiptType: job.type,
-        content: job.content,
-        printerId: job.printerId,
+        content: content,
+        printerId: "default",
       });
-    } catch (error) {
-      console.error(`Unable to print ${job.type} receipt`, error);
     }
   }
 }

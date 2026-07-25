@@ -2,19 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { ReceiptPreview } from "./components/ReceiptPreview";
 import { sampleOrder } from "./data/sampleOrder";
-import { getDefaultPrinters, getPrinterName } from "./printing/printerConfig";
 import { printerQueue } from "./printing/printerQueue";
+import { PrintingFeature } from "./pages/PrintingFeature";
 
 function App() {
-  const [status, setStatus] = useState("Press Space or click Print to send both receipts to the printer.");
-  const [selectedPrinterId, setSelectedPrinterId] = useState("thermal-demo");
-  const [printers] = useState(() => getDefaultPrinters());
+  const [view, setView] = useState<"pos" | "settings">("pos");
+  const [status, setStatus] = useState("Press Space or click Print to send both receipts to the configured thermal printers.");
 
   const order = useMemo(() => sampleOrder, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code === "Space") {
+      if (view === "pos" && event.code === "Space") {
         event.preventDefault();
         void handlePrint();
       }
@@ -22,38 +21,55 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [view]);
 
   async function handlePrint() {
-    setStatus(`Printing customer bill and kitchen ticket on ${getPrinterName(printers, selectedPrinterId)}...`);
+    const customerPrinter = localStorage.getItem("customer_printer");
+    const kitchenPrinter = localStorage.getItem("kitchen_printer");
+    
+    if (customerPrinter || kitchenPrinter) {
+      setStatus(`Printing to configured printers: Customer (${customerPrinter || "Default"}), Kitchen (${kitchenPrinter || "Default"})...`);
+    } else {
+      setStatus("Printing customer bill and kitchen ticket on the Windows default printer...");
+    }
+
     try {
-      await printerQueue.enqueue(order, selectedPrinterId);
+      await printerQueue.enqueue(order);
       setStatus("Print jobs queued successfully.");
     } catch (error) {
       console.error(error);
-      setStatus("Printing failed. Please verify the printer setup.");
+      setStatus("Printing failed. Please verify printer connection and settings.");
     }
+  }
+
+  if (view === "settings") {
+    return (
+      <main className="pos-shell" style={{ gridTemplateColumns: "1fr" }}>
+        <PrintingFeature onBack={() => setView("pos")} />
+      </main>
+    );
   }
 
   return (
     <main className="pos-shell">
-      <section className="panel panel--summary">
-        <h1>DreamX POS Printing Demo</h1>
-        <p className="subtitle">Offline-first thermal receipt printing for customer bills and kitchen tickets.</p>
-        <label className="printer-select" htmlFor="printer-select">
-          Printer
-          <select id="printer-select" value={selectedPrinterId} onChange={(event) => setSelectedPrinterId(event.target.value)}>
-            {printers.map((printer) => (
-              <option key={printer.id} value={printer.id}>
-                {printer.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="print-button" type="button" onClick={() => void handlePrint()}>
-          Print Both Receipts
-        </button>
+      <section className="panel panel--summary" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+        <div>
+          <h1 style={{ marginTop: 0 }}>DreamX POS Printing Demo</h1>
+          <p className="subtitle" style={{ margin: 0 }}>Offline-first thermal receipt printing for customer bills and kitchen tickets.</p>
+        </div>
+
+        <div style={{ display: "flex", gap: "0.75rem", flexDirection: "column" }}>
+          <button className="print-button" type="button" onClick={() => void handlePrint()}>
+            Print Both Receipts
+          </button>
+          
+          <button className="nav-link-btn" type="button" onClick={() => setView("settings")}>
+            ⚙ Configure Printers
+          </button>
+        </div>
+
         <p className="status">{status}</p>
+
         <div className="meta-grid">
           <div>
             <strong>Order</strong>
